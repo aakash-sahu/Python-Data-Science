@@ -1,0 +1,83 @@
+## Assuming spark as 
+
+from pyspark.sql import SQLContext, SparkSession
+
+spark = SparkSession.builder.\
+  config(conf = conf)\
+  .appName("PySpark-AS")\
+  .getOrCreate()
+  
+  sc = SparkContext()
+#sc = spark.sparkContext
+
+sqlContext = SQLContext(sc)
+
+##Reading parquet file directly
+Query = """
+select measurement, count(measurement) as count from
+parquet.`~/NY.parquet`
+where measurement not like '%_s20'
+group by measurement
+"""
+
+df = sqlContext.sql(Query)
+
+# UDF
+def count_nan(V):
+  A = unpackArray(V, data_type = np.float16)
+  return int(sum(isnan(A)))
+
+count_nan_udf = udf(count_nan, IntegerType())
+count_nan_udf
+
+df = df.withColumn("nan_no", count_nan_udf(df.Values))
+df.show(1)
+
+## simple syntax
+
+df = spark.sql(query)
+df.select('col1').distinct().show()
+
+df.filter(df.col1 == 'xyz').show()
+
+df_1 = df.filter(df.col1.isin(["xyz","abc"]))
+
+#write partitioned external table. For managed table remove path
+df_1.write.format('parquet')\
+.partitionBy('col1')\
+.mode('append')\
+.option('path','hdfs://gdch01-cluster02-ns/datalake/SANDBOX/DATA/sandbox.db/df_with_partition')\
+.saveAsTable("sandbox.df_with_partition")
+
+#default
+df_1.write.format('hive').saveAsTable("sandbox.dfpyspark_write_hive_default")
+
+#parquet table
+df_1.write.format('parquet').saveAsTable("sandbox.dfpyspark_write_hive_parquet")
+
+#only parquet
+df2.write\
+.partitionBy('col1')\
+.mode('append')\
+.parquet('~/df_1_partitions/')
+
+query = """
+CREATE TEMPORARY VIEW parquetTable
+USING org.apache.spark.sql.parquet
+OPTIONS (
+  path "/user/p624274/NY.parquet"
+)
+"""
+
+sqlContext.sql(query)
+
+
+query ="""
+select station, measurement, year
+from parquet.`%s.parquet`
+where measurement = "SNOW" """%('~/NY')
+
+print(query)
+
+%time df2 = sqlContext.sql(query); df2.show(5)
+
