@@ -1,0 +1,271 @@
+import findspark
+findspark.init()
+
+from pyspark import SparkContext
+#sc = SparkContext(master = 'local[2]')
+sc = SparkContext()
+print(sc)
+type(sc)
+
+
+a = sc.parallelize(range(3))
+a
+
+l = a.collect()
+
+type(l)
+
+l
+
+a.map(lambda x: x*x).collect()
+
+
+a.reduce(lambda x,y: x+y)
+
+
+words = ['this', 'is', 'an', 'spark123', 'notebook']
+
+w = sc.parallelize(words)
+
+w.reduce(lambda x,y: x if len(x) <= len(y) else y)
+
+def wordslarger(x,y):
+  if len(x) > len(y): return x
+  elif len(y) > len(x): return y
+  else:
+    if x >y:
+      return x
+    else:
+      return y
+    
+w.reduce(wordslarger)    
+    
+## Lazy evaluation
+
+%time
+
+rdd = sc.parallelize(range(1000000))
+
+from math import cos
+def taketime(j):
+  [cos(j) for j in range(100)]
+  return cos(j)
+
+
+%time taketime(1000000)
+
+%time Interm = rdd.map(lambda x: taketime(x))
+
+print(Interm.toDebugString())
+print(Interm.toDebugString().decode())
+
+%time print("output=",Interm.reduce(lambda x,y: x+y))
+
+%time print("output=",Interm.filter(lambda x: x>0).count())
+
+
+%time Interm = rdd.map(lambda x: taketime(x)).cache()
+
+print(Interm.toDebugString().decode())
+
+%time print("output=",Interm.reduce(lambda x,y: x+y))
+
+%time print("output=",Interm.filter(lambda x: x>0).count())
+
+## Partitioning and glom
+
+A = sc.parallelize(range(100000))
+
+print(A.getNumPartitions())
+
+D = A.repartition(10)
+print(D.getNumPartitions())
+
+A = sc.parallelize(range(100000), numSlices = 10)
+print(A.getNumPartitions())
+
+A = sc.parallelize(range(10000)).map(lambda x:(x,x)).partitionBy(10)
+print(A.getNumPartitions())
+
+print(A.glom().map(len).collect())
+
+B = A.filter(lambda pair: pair[0]%5 ==0)
+print(B.glom().map(len).collect())
+
+C = B.map(lambda pair: (pair[1]/10, pair[1])).partitionBy(10)
+print(C.glom().map(len).collect())
+
+D = B.repartition(10)
+print(D.glom().map(len).collect())
+
+## chaining and RDD elements
+
+n = 10000
+
+a = sc.parallelize([1,2,3,4]*int(n/4))
+a
+print(a.count())
+
+a.first()
+a.take(5)
+
+# sampling
+
+m = 5.
+
+print("sample =", a.sample(False, m/n).collect())
+
+print("sample =", a.sample(False, m/n).collect())
+
+print("greater than 3=", a.filter(lambda x: x >3).count())
+
+#distinct
+print(a.distinct().collect())
+
+#flatmap
+
+text = ["you're my sunshine" ,"my only sunshine"]
+t = sc.parallelize(text)
+
+t.map(lambda line: line.split(" ")).collect()
+t.flatMap(lambda line: line.split(" ")).collect()
+
+# Set operations
+# union - is bag operation
+
+rdd1 = sc.parallelize([1,1,3,4])
+rdd2 = sc.parallelize(['a', 'b', 1])
+
+rdd1.union(rdd2).collect()
+
+rdd1.union(rdd2).distinct().collect()
+
+#intersection
+#subtract
+#cartesian
+
+rdd1.subtract(rdd2).collect()
+
+rdd1.intersection(rdd2).collect()
+
+rdd1.cartesian(rdd2).collect()
+
+## Word count
+
+
+text_file = sc.textFile('/user/p624274/Moby-Dick.txt')
+
+text_file
+type(text_file)
+text_file.take(5)
+
+words = text_file.flatMap(lambda line: line.split(" "))
+words.take(5)
+words.count()
+not_empty = words.filter(lambda x: x != '')
+not_empty.take(5)
+not_empty.count()
+key_values = not_empty.map(lambda x: (x,1))
+key_values.take(5)
+counts = key_values.reduceByKey(lambda x,y: x+y)
+counts.take(5)
+print(counts.toDebugString().decode())
+
+Count = counts.count()
+print(Count)
+
+Sum = counts.map(lambda x: x[1]).reduce(lambda x,y: x+y)
+Sum
+
+print("Different words = {}, total words= {}").format(Count, Sum)
+
+#word count - top 5 words
+
+#collect
+C = counts.collect()
+
+C.sort(key = lambda x: x[1])
+
+print('most common words\n'+'\n'.join(['%s:\t%d'%c for c in reversed(C[-5:])]))
+
+#method 2: spark
+
+word_pairs = text_file.flatMap(lambda line: line.split(" "))\
+  .filter(lambda x: x != '')\
+  .map(lambda x: (x,1))  
+
+word_pairs.take(5)
+
+counts = word_pairs.reduceByKey(lambda x, y: x+y)
+
+counts.take(5)
+
+reverse_sort_count = counts.map(lambda x: (x[1], x[0]))\
+  .sortByKey(ascending = False)
+  
+print(reverse_sort_count.toDebugString().decode())
+
+D = reverse_sort_count.take(5)
+D
+
+print('most common words\n'+'\n'.join(['%s:\t%s'%c for c in D]))
+
+
+#Operations on Key-value RDDs
+
+rdd = sc.parallelize([(1,2), (2,4), (2,6)])
+print("Original RDD :", rdd.collect())
+print("After transformation : ", rdd.reduceByKey(lambda a,b: a+b).collect())
+
+rdd = sc.parallelize([(2,2), (1,4), (3,6)])
+print("Original RDD :", rdd.collect())
+print("After transformation : ", rdd.sortByKey().collect())
+
+print("After transformation : ", rdd.mapValues(lambda x: x*2).collect())
+
+
+rdd = sc.parallelize([(1,2), (2,4), (2,6), (1,4), (3,5), (3,2)])
+print("Original RDD :", rdd.collect())
+print("After transformation : ", rdd.groupByKey().mapValues(lambda x:[a for a in x]).collect())
+
+rdd.groupByKey().collect()
+print(rdd.groupByKey().mapValues(lambda x: [a*a for a in x]).collect())
+
+print(rdd.groupByKey().mapValues(lambda x: [a*a for a in x]).mapValues(sum).collect())
+
+print(rdd.groupByKey().mapValues(lambda x: sum([a*a for a in x])).sortByKey().collect())
+
+
+rdd = sc.parallelize([(1,2), (2,4), (2,6)])
+print("Original RDD :", rdd.collect())
+# the lambda function generates for each number i, an iterator that produces i,i+1
+print("After transformation : ", rdd.flatMapValues(lambda x: list(range(x,x+2))).collect())
+
+
+rdd1 = sc.parallelize([(1,2),(2,1),(2,2)])
+rdd2 = sc.parallelize([(2,5),(3,1)])
+print('rdd1=',rdd1.collect())
+print('rdd2=',rdd2.collect())
+
+print("Result:", rdd1.subtractByKey(rdd2).collect())
+
+
+print("Result:", rdd1.join(rdd2).collect())
+
+
+##Actions
+print(rdd.countByKey())
+
+print(rdd.collectAsMap())
+
+rdd.lookup(2)
+
+
+lines = sc.textFile("~/Moby-Dick.txt")
+words = lines.flatMap(lambda x: x.split(" "))
+pairs = words.map(lambda s: (s, 1))
+pairs.take(5)
+counts = pairs.reduceByKey(lambda a, b: a + b)
+counts.take(5)
+
+#sc.stop()
