@@ -1,0 +1,32 @@
+#################################
+##Spark JDBC connection to oracle######
+#################################
+
+from pyspark.sql import SparkSession, SQLContext
+from pyspark import SparkConf, SparkContext
+
+conf = SparkConf()
+
+conf.set('spark.executor.memory', '16g')
+conf.set('spark.executor.cores', '4')
+conf.set("spark.jars",'~/ojdbc6.jar') #local path. Careful with the version of jar file
+#conf.set("spark.driver.extraClassPath",'~/ojdbc6.jar') #didn't work
+#conf.set("spark.executor.extraClassPath",'~/ojdbc6.jar')#didn't work
+
+#sc = SparkContext(conf = conf)
+
+spark = SparkSession\
+    .builder\
+    .config(conf = conf)\
+    .appName("AS-JDBC")\
+    .getOrCreate()
+    
+query = "(select * from schema.table_name) temp"
+db_df = spark.read \
+    .format("jdbc") \
+    .option("url", "jdbc:oracle:thin:@//host:port/ServiceName") \
+    .option("dbtable", query) \
+    .option("user", "username") \
+    .option("password", "password") \
+    .option("driver","oracle.jdbc.driver.OracleDriver")\
+    .load()
