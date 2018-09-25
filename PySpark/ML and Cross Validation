@@ -1,0 +1,352 @@
+## Following code contains PySpark code from the tutorial as well as actual model in lower half##
+
+from pyspark.sql import SparkSession
+
+from pyspark.ml import Pipeline
+from pyspark.ml.classification import LogisticRegression
+from pyspark.ml.evaluation import BinaryClassificationEvaluator
+from pyspark.ml.feature import HashingTF, Tokenizer
+from pyspark.ml.tuning import CrossValidator, ParamGridBuilder
+from pyspark.sql.functions import udf, col
+from pyspark.sql.types import IntegerType
+
+from pyspark.ml import Pipeline
+from pyspark.ml.feature import OneHotEncoder, StringIndexer, VectorAssembler
+
+spark = SparkSession\
+    .builder\
+    .enableHiveSupport()\
+    .appName("py-cv")\
+    .getOrCreate()
+    
+    
+# Prepare training documents, which are labeled.
+training = spark.createDataFrame([
+    (0, "a b c d e spark", 1.0),
+    (1, "b d", 0.0),
+    (2, "spark f g h", 1.0),
+    (3, "hadoop mapreduce", 0.0),
+    (4, "b spark who", 1.0),
+    (5, "g d a y", 0.0),
+    (6, "spark fly", 1.0),
+    (7, "was mapreduce", 0.0),
+    (8, "e spark program", 1.0),
+    (9, "a e c l", 0.0),
+    (10, "spark compile", 1.0),
+    (11, "hadoop software", 0.0)
+], ["id", "text", "label"])
+
+training.show(5)
+
+# Configure an ML pipeline, which consists of tree stages: tokenizer, hashingTF, and lr.
+tokenizer = Tokenizer(inputCol="text", outputCol="words")
+hashingTF = HashingTF(inputCol=tokenizer.getOutputCol(), outputCol="features")
+lr = LogisticRegression(maxIter=10)
+pipeline = Pipeline(stages=[tokenizer, hashingTF, lr])
+
+df = tokenizer.transform(training)
+
+df.show(truncate = False)
+
+countTokens = udf(lambda words: len(words), IntegerType())
+
+df.select("text", "words")\
+    .withColumn("tokens", countTokens(col("words"))).show(truncate=False)
+
+df.select("text", "words")\
+    .withColumn("tokens", countTokens(df.words)).show(truncate=False)
+
+
+df2 = hashingTF.transform(df)
+df2.show(5, truncate = False)
+
+paramGrid = ParamGridBuilder() \
+    .addGrid(hashingTF.numFeatures, [10, 100, 1000]) \
+    .addGrid(lr.regParam, [0.1, 0.01]) \
+    .build()
+
+crossval = CrossValidator(estimator=pipeline,
+                          estimatorParamMaps=paramGrid,
+                          evaluator=BinaryClassificationEvaluator(),
+                          numFolds=4)  
+    
+# Run cross-validation, and choose the best set of parameters.
+cvModel = crossval.fit(training)
+
+# Prepare test documents, which are unlabeled.
+test = spark.createDataFrame([
+    (4, "spark i j k"),
+    (5, "l m n"),
+    (6, "mapreduce spark"),
+    (7, "apache hadoop")
+], ["id", "text"])
+
+test.show(2)
+
+# Make predictions on test documents. cvModel uses the best model found (lrModel).
+prediction = cvModel.transform(test)
+
+prediction.show(2)
+selected = prediction.select("id", "text", "probability", "prediction")
+for row in selected.collect():
+    print(row)
+    
+#TrainValidationSplit
+
+from pyspark.ml.evaluation import RegressionEvaluator
+from pyspark.ml.regression import LinearRegression
+from pyspark.ml.tuning import ParamGridBuilder, TrainValidationSplit
+
+# Prepare training and test data.
+data = spark.read.format("libsvm").load("~/sample_linear_regression_data.txt")
+train, test = data.randomSplit([0.9, 0.1], seed=12345)
+
+lr = LinearRegression(maxIter=10)
+
+data.show(5)
+
+# We use a ParamGridBuilder to construct a grid of parameters to search over.
+# TrainValidationSplit will try all combinations of values and determine best model using
+# the evaluator.
+paramGrid = ParamGridBuilder()\
+    .addGrid(lr.regParam, [0.1, 0.01]) \
+    .addGrid(lr.fitIntercept, [False, True])\
+    .addGrid(lr.elasticNetParam, [0.0, 0.5, 1.0])\
+    .build()
+
+# In this case the estimator is simply the linear regression.
+# A TrainValidationSplit requires an Estimator, a set of Estimator ParamMaps, and an Evaluator.
+tvs = TrainValidationSplit(estimator=lr,
+                           estimatorParamMaps=paramGrid,
+                           evaluator=RegressionEvaluator(),
+                           # 80% of the data will be used for training, 20% for validation.
+                           trainRatio=0.8)
+
+# Run TrainValidationSplit, and choose the best set of parameters.
+model = tvs.fit(train)
+
+# Make predictions on test data. model is the model with combination of parameters
+# that performed best.
+model.transform(test)\
+    .select("features", "label", "prediction")\
+    .show()
+    
+###########################
+##Logistic Regression#####
+##########################
+
+lr = LogisticRegression(maxIter=10)
+df = spark.read.parquet('~/data_mod')
+
+df.show(5)
+
+df.agg({'LoanAmount_log':'max'}).show()
+df.agg({'LoanAmount_log':'avg'}).show()
+df.agg({'LoanAmount_log':'mean'}).show()
+df.agg({'LoanAmount_log':'approx_count_distinct'}).show()
+
+df.withColumn('loanamount_median', df.LoanAmount/100).select('loanamount_median', 'LoanAmount').show()
+df.select('loanamount_median', 'LoanAmount').show()
+
+df.columns
+
+df.withColumn('total_inc', df.ApplicantIncome + df.CoapplicantIncome).select('total_inc', 'ApplicantIncome', 'CoapplicantIncome').show()
+df = df.withColumn('total_inc', df.ApplicantIncome + df.CoapplicantIncome)
+df.select('total_inc', 'ApplicantIncome', 'CoapplicantIncome').show(10)
+
+df.describe().toPandas()
+
+df.show(5, truncate = False)
+for x in df.dtypes:
+  print x[1]
+
+
+categorical = ['Gender','Married','Dependents','Education','Self_Employed','Property_Area']
+
+stages = [] # stages in our Pipeline
+for categoricalCol in categorical:
+  
+    # Category Indexing with StringIndexer
+    stringIndexer = StringIndexer(inputCol=categoricalCol, outputCol=categoricalCol + "Index")
+    
+    # Use OneHotEncoder to convert categorical variables into binary SparseVectors
+    encoder = OneHotEncoder(inputCol=categoricalCol + "Index", outputCol=categoricalCol + "classVec")
+    #encoder = OneHotEncoder(inputCol=stringIndexer.getOutputCol(), outputCol=[categoricalCol + "classVec"])
+    # Add stages.  These are not run here, but will run all at once later on.
+    stages += [stringIndexer, encoder]
+
+
+#stringIdx = StringIndexer(inputCol= 'Credit_History', outputCol='Credit_History' + "_Index")
+#
+#stridx =stringIdx.fit(df)
+#stringIdx.getOutputCol()
+#
+#df2 = stridx.transform(df)
+#
+#df2.columns
+#df2.select('Credit_History','Credit_History_Index').show(10)
+#df.printSchema()
+#
+#encoder = OneHotEncoder(inputCol="Credit_History_Index", outputCol="Credit_HistoryVec")
+#encoded = encoder.transform(df2)
+#encoded.select('Credit_History','Credit_History_Index','Credit_HistoryVec').head().Credit_HistoryVec
+
+
+#stringIdx = StringIndexer(inputCol= 'Dependents', outputCol='Dependents' + "_Index")
+#
+#stridx =stringIdx.fit(df)
+#stringIdx.getOutputCol()
+#
+#df2 = stridx.transform(df)
+#
+#df2.columns
+#df2.select('Dependents','Dependents_Index').show(10)
+#df.printSchema()
+#
+#encoder = OneHotEncoder(inputCol="Dependents_Index", outputCol="DependentsVec")
+#encoded = encoder.transform(df2)
+#encoded.select('Dependents','Dependents_Index','DependentsVec').show(5)
+
+stages
+
+# Convert label into label indices using the StringIndexer
+label_stringIdx = StringIndexer(inputCol="Loan_Status", outputCol="label")
+stages += [label_stringIdx]
+
+
+# Transform all features into a vector using VectorAssembler
+numericCols = ["LoanAmount_log", "Total_income_log","Loan_Amount_Term","Credit_History"]
+assemblerInputs = [c + "classVec" for c in categorical] + numericCols
+assembler = VectorAssembler(inputCols=assemblerInputs, outputCol="features")
+stages += [assembler]
+
+dataset = df.select(categorical + numericCols + ['Loan_Status'])
+
+dataset.columns
+# Create a Pipeline.
+pipeline = Pipeline(stages=stages)
+# Run the feature transformations.
+#  - fit() computes feature statistics as needed.
+#  - transform() actually transforms the features.
+pipelineModel = pipeline.fit(dataset)
+dataset = pipelineModel.transform(dataset)
+# Keep relevant columns
+selectedcols = ["label", "features"] #+ cols
+dataset = dataset.select(selectedcols)
+dataset.show(5)
+d = dataset.toPandas()
+
+### Randomly split data into training and test sets. set seed for reproducibility
+(trainingData, testData) = dataset.randomSplit([0.7, 0.3], seed=100)
+print(trainingData.count())
+print(testData.count())
+
+from pyspark.ml.classification import LogisticRegression
+
+# Create initial LogisticRegression model
+lr = LogisticRegression(labelCol="label", featuresCol="features", maxIter=10)
+
+# Train model with Training Data
+lrModel = lr.fit(trainingData)
+
+lrModel.coefficientMatrix
+lrModel.interceptVector
+print(lrModel.summary.predictions)
+
+# Make predictions on test data using the transform() method.
+# LogisticRegression.transform() will only use the 'features' column.
+predictions = lrModel.transform(testData)
+
+predictions.printSchema()
+
+predictions.show(5)
+
+from pyspark.ml.evaluation import BinaryClassificationEvaluator
+
+
+# Evaluate model
+evaluator = BinaryClassificationEvaluator(rawPredictionCol="rawPrediction")
+evaluator.evaluate(predictions)
+
+evaluator.getMetricName()
+
+from pyspark.ml.regression import GeneralizedLinearRegression
+GLMmodel = GeneralizedLinearRegression(family="binomial", link="logit", maxIter=10, regParam=0.3)
+
+model = GLMmodel.fit(dataset)
+
+# Print the coefficients and intercept for generalized linear regression model
+print("Coefficients: " + str(model.coefficients))
+print("Intercept: " + str(model.intercept))
+
+# Summarize the model over the training set and print out some metrics
+summary = model.summary
+print("Coefficient Standard Errors: " + str(summary.coefficientStandardErrors))
+print("T Values: " + str(summary.tValues))
+print("P Values: " + str(summary.pValues))
+print("Dispersion: " + str(summary.dispersion))
+print("Null Deviance: " + str(summary.nullDeviance))
+print("Residual Degree Of Freedom Null: " + str(summary.residualDegreeOfFreedomNull))
+print("Deviance: " + str(summary.deviance))
+print("Residual Degree Of Freedom: " + str(summary.residualDegreeOfFreedom))
+print("AIC: " + str(summary.aic))
+print("Deviance Residuals: ")
+summary.residuals().show()
+
+
+pred = lrModel.transform(testData)
+
+pred.printSchema()
+
+pred.show(5)
+
+from pyspark.ml.evaluation import BinaryClassificationEvaluator
+
+# Evaluate model
+evaluator = BinaryClassificationEvaluator(rawPredictionCol="rawPrediction")
+evaluator.evaluate(pred)
+
+##CRoss validation
+from pyspark.ml.tuning import ParamGridBuilder, CrossValidator
+
+# Create ParamGrid for Cross Validation
+paramGrid = (ParamGridBuilder()
+             .addGrid(lr.regParam, [0.01, 0.5, 2.0])
+             .addGrid(lr.elasticNetParam, [0.0, 0.5, 1.0])
+             .addGrid(lr.maxIter, [1, 5, 10])
+             .build
+             
+# Create 5-fold CrossValidator
+cv = CrossValidator(estimator=lr, estimatorParamMaps=paramGrid, evaluator=evaluator, numFolds=5)
+
+# Run cross validations
+cvModel = cv.fit(trainingData)
+# this will likely take a fair amount of time because of the amount of models that we're creating and testing             
+
+             
+# Use test set to measure the accuracy of our model on new data
+predictions = cvModel.transform(testData)
+predictions.show(5)
+# cvModel uses the best model found from the Cross Validation
+# Evaluate best model
+evaluator.evaluate(predictions)
+             
+print('Model Intercept: ', cvModel.bestModel.intercept)
+             
+weights = cvModel.bestModel.coefficients
+weights = [(float(w),) for w in weights]  # convert numpy type to float, and to tuple
+weightsDF = spark.createDataFrame(weights, ["Feature Weight"])
+  
+             
+weightsDF.show(10)
+cvModel.bestModel.g
+
+cvModel.getParam('regParam')            
+             
+cvModel.avgMetrics             
+             
+             
+lr.params             
+             
+
+             
