@@ -1,2 +1,3 @@
-# Python-Data-Science
-This repository contains practise notebooks for using Python for data analysis and data science and also contains practise problems from EdX course 'Python for data science"
+# Python-Data-Science and PySpark
+This repository contains practise notebooks for using Python and PySpark for data analysis and data science. 
+Also contains practise problems from EdX courses 'Python for data science" and "Big Data Analytics with Spark"
